@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensor Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Sensor Dashboard</h1>
+            <span id="status" class="status disconnected">Connecting…</span>
+        </header>
+
+        <main>
+            <div class="card">
+                <div class="reading">
+                    <span id="current-value">--</span>
+                    <span id="current-unit"></span>
+                </div>
+                <canvas id="chart"></canvas>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const MAX_POINTS = 60;
+        const labels = [];
+        const values = [];
+
+        const chart = new Chart(document.getElementById('chart').getContext('2d'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Sensor Reading',
+                    data: values,
+                    borderColor: '#4ade80',
+                    backgroundColor: 'rgba(74,222,128,0.08)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.3,
+                }]
+            },
+            options: {
+                animation: false,
+                responsive: true,
+                scales: {
+                    x: {
+                        ticks: { color: '#9ca3af', maxTicksLimit: 8 },
+                        grid:  { color: '#374151' }
+                    },
+                    y: {
+                        ticks: { color: '#9ca3af' },
+                        grid:  { color: '#374151' }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#f9fafb' } }
+                }
+            }
+        });
+
+        function pushReading(r) {
+            const t = new Date(r.timestamp).toLocaleTimeString();
+            labels.push(t);
+            values.push(r.value);
+            if (labels.length > MAX_POINTS) { labels.shift(); values.shift(); }
+            chart.update();
+            document.getElementById('current-value').textContent = r.value.toFixed(2);
+            document.getElementById('current-unit').textContent  = r.unit;
+        }
+
+        // Pre-populate chart with historical data
+        fetch('/history')
+            .then(res => res.json())
+            .then(history => history.reverse().forEach(pushReading))
+            .catch(() => {});
+
+        // Live stream via SSE
+        const statusEl = document.getElementById('status');
+        const source   = new EventSource('/stream');
+
+        source.onopen = () => {
+            statusEl.textContent = 'Live';
+            statusEl.className   = 'status connected';
+        };
+        source.onmessage = e => pushReading(JSON.parse(e.data));
+        source.onerror   = () => {
+            statusEl.textContent = 'Reconnecting…';
+            statusEl.className   = 'status disconnected';
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --bg:      #111827;
+    --surface: #1f2937;
+    --border:  #374151;
+    --text:    #f9fafb;
+    --muted:   #9ca3af;
+    --green:   #4ade80;
+    --red:     #f87171;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, sans-serif;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+h1 { font-size: 1.5rem; font-weight: 600; }
+
+.status {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-weight: 500;
+}
+.status.connected    { background: rgba(74,222,128,0.15); color: var(--green); }
+.status.disconnected { background: rgba(248,113,113,0.15); color: var(--red); }
+
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+}
+
+.reading {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--green);
+    margin-bottom: 1.5rem;
+}
+
+.reading span + span {
+    font-size: 1.25rem;
+    color: var(--muted);
+    margin-left: 0.5rem;
+}
