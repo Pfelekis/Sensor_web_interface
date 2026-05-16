@@ -6,8 +6,10 @@
     --border:  #374151;
     --text:    #f9fafb;
     --muted:   #9ca3af;
-    --green:   #4ade80;
     --red:     #f87171;
+    --green:   #4ade80;
+    --blue:    #60a5fa;
+    --orange:  #fb923c;
 }
 
 body {
@@ -18,7 +20,7 @@ body {
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 2rem;
 }
@@ -38,8 +40,18 @@ h1 { font-size: 1.5rem; font-weight: 600; }
     border-radius: 9999px;
     font-weight: 500;
 }
-.status.connected    { background: rgba(74,222,128,0.15); color: var(--green); }
-.status.disconnected { background: rgba(248,113,113,0.15); color: var(--red); }
+.status.connected    { background: rgba(74,222,128,0.15);  color: var(--green); }
+.status.disconnected { background: rgba(248,113,113,0.15); color: var(--red);   }
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+}
 
 .card {
     background: var(--surface);
@@ -48,15 +60,38 @@ h1 { font-size: 1.5rem; font-weight: 600; }
     padding: 1.5rem;
 }
 
-.reading {
-    font-size: 2.5rem;
-    font-weight: 700;
-    color: var(--green);
-    margin-bottom: 1.5rem;
+.card h2 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 1rem;
 }
 
-.reading span + span {
-    font-size: 1.25rem;
-    color: var(--muted);
-    margin-left: 0.5rem;
+.card h2 small { font-weight: 400; }
+
+.readings {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1.25rem;
 }
+
+.axis {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.axis span {
+    display: block;
+    font-size: 1.4rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+}
+
+.axis.x span { color: var(--red);   }
+.axis.y span { color: var(--green); }
+.axis.z span { color: var(--blue);  }

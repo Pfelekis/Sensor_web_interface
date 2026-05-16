@@ -1,4 +1,4 @@
-import json
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,9 +8,11 @@ from backend.main import app, _subscribers
 
 BASE = "http://test"
 
-SAMPLE = [
-    {"timestamp": "2024-01-01T00:00:00+00:00", "value": 25.0, "unit": "°C"},
-]
+SAMPLE = [{
+    "timestamp": "2024-01-01T00:00:00+00:00",
+    "accel": {"x": 0.12, "y": -0.05, "z": 9.79},
+    "gyro":  {"x": 0.30, "y": -0.10, "z": 0.05},
+}]
 
 
 @pytest.mark.asyncio
@@ -29,31 +31,24 @@ async def test_history_returns_json_array():
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body, list)
-    assert body[0]["value"] == 25.0
+    assert body[0]["accel"]["z"] == pytest.approx(9.79)
 
 
 @pytest.mark.asyncio
-async def test_history_at_most_100_items():
-    big = [{"timestamp": "2024-01-01T00:00:00+00:00", "value": float(i), "unit": "°C"} for i in range(100)]
+async def test_history_at_most_200_items():
+    big = [SAMPLE[0]] * 200
     with patch("backend.main.get_history", new=AsyncMock(return_value=big)):
         async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
             response = await client.get("/history")
-    assert len(response.json()) <= 100
+    assert len(response.json()) <= 200
 
 
 @pytest.mark.asyncio
 async def test_stream_content_type_and_first_event():
     reading = SAMPLE[0]
-
-    async def fake_get():
-        return reading
-
-    # Pre-load a subscriber queue so the endpoint finds data immediately
-    import asyncio
     q: asyncio.Queue = asyncio.Queue()
     q.put_nowait(reading)
     _subscribers.append(q)
-
     try:
         with patch("backend.main.insert_reading", new=AsyncMock()):
             async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:

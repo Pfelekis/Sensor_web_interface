@@ -6,7 +6,7 @@ import pytest
 from backend.sensor import SensorReader
 
 
-async def _get_reading(timeout: float = 3.0) -> dict:
+async def _one_reading(timeout: float = 3.0) -> dict:
     reader = SensorReader()
     queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(reader.start(queue))
@@ -17,34 +17,55 @@ async def _get_reading(timeout: float = 3.0) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_simulator_has_required_keys():
-    reading = await _get_reading()
-    assert {"timestamp", "value", "unit"} <= reading.keys()
+async def test_reading_has_required_keys():
+    r = await _one_reading()
+    assert {"timestamp", "accel", "gyro"} <= r.keys()
 
 
 @pytest.mark.asyncio
-async def test_simulator_value_is_float():
-    reading = await _get_reading()
-    assert isinstance(reading["value"], float)
+async def test_accel_has_xyz():
+    r = await _one_reading()
+    assert {"x", "y", "z"} == r["accel"].keys()
 
 
 @pytest.mark.asyncio
-async def test_simulator_timestamp_is_iso8601():
-    reading = await _get_reading()
-    datetime.fromisoformat(reading["timestamp"])  # raises if invalid
+async def test_gyro_has_xyz():
+    r = await _one_reading()
+    assert {"x", "y", "z"} == r["gyro"].keys()
 
 
 @pytest.mark.asyncio
-async def test_simulator_interval_approx_one_second():
+async def test_values_are_floats():
+    r = await _one_reading()
+    for axis in ("x", "y", "z"):
+        assert isinstance(r["accel"][axis], float)
+        assert isinstance(r["gyro"][axis],  float)
+
+
+@pytest.mark.asyncio
+async def test_timestamp_is_iso8601():
+    r = await _one_reading()
+    datetime.fromisoformat(r["timestamp"])  # raises if invalid
+
+
+@pytest.mark.asyncio
+async def test_accel_z_near_gravity():
+    """Simulated Z-axis acceleration should be close to 9.81 m/s²."""
+    r = await _one_reading()
+    assert 8.0 < r["accel"]["z"] < 12.0
+
+
+@pytest.mark.asyncio
+async def test_simulator_rate_approx_10hz():
+    """Two consecutive readings should arrive ~0.1 s apart."""
     reader = SensorReader()
     queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(reader.start(queue))
     try:
         t0 = asyncio.get_event_loop().time()
-        await asyncio.wait_for(queue.get(), timeout=3.0)
-        await asyncio.wait_for(queue.get(), timeout=3.0)
+        await asyncio.wait_for(queue.get(), timeout=2.0)
+        await asyncio.wait_for(queue.get(), timeout=2.0)
         elapsed = asyncio.get_event_loop().time() - t0
     finally:
         task.cancel()
-    # Two readings: first arrives <1s, second ~1s later; total 0.8-2.4s
-    assert 0.8 <= elapsed <= 2.4
+    assert 0.05 <= elapsed <= 0.5

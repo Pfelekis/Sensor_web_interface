@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 
 
 class SensorReader:
+    """6 DOF IMU reader: accelerometer (m/s²) + gyroscope (°/s)."""
+
     def __init__(self) -> None:
         self.mode = os.getenv("SENSOR_MODE", "simulate")
-        self.unit = os.getenv("SENSOR_UNIT", "°C")
 
     async def start(self, queue: asyncio.Queue) -> None:
         if self.mode == "simulate":
@@ -21,53 +22,67 @@ class SensorReader:
             raise ValueError(f"Unknown SENSOR_MODE: {self.mode!r}")
 
     async def _simulate(self, queue: asyncio.Queue) -> None:
+        """Sine-wave motion on all axes + Gaussian noise at 10 Hz."""
         t = 0
         while True:
-            value = 25.0 + 5.0 * math.sin(2 * math.pi * t / 60) + random.gauss(0, 0.3)
+            # Gravity dominates Z; small sinusoidal sway on X and Y
+            accel = {
+                "x": round(0.5 * math.sin(2 * math.pi * t / 200) + random.gauss(0, 0.02), 4),
+                "y": round(0.3 * math.cos(2 * math.pi * t / 300) + random.gauss(0, 0.02), 4),
+                "z": round(9.81 + 0.2 * math.sin(2 * math.pi * t / 150) + random.gauss(0, 0.02), 4),
+            }
+            gyro = {
+                "x": round(5.0 * math.sin(2 * math.pi * t / 250) + random.gauss(0, 0.05), 4),
+                "y": round(3.0 * math.cos(2 * math.pi * t / 400) + random.gauss(0, 0.05), 4),
+                "z": round(2.0 * math.sin(2 * math.pi * t / 350) + random.gauss(0, 0.05), 4),
+            }
             await queue.put({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "value": round(value, 2),
-                "unit": self.unit,
+                "accel": accel,
+                "gyro": gyro,
             })
             t += 1
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.1)  # 10 Hz
 
     async def _read_serial(self, queue: asyncio.Queue) -> None:
+        """Parse CSV lines: accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z"""
         import serial  # noqa: PLC0415
         port = os.getenv("SERIAL_PORT", "/dev/ttyUSB0")
         baud = int(os.getenv("BAUD_RATE", "115200"))
         ser = serial.Serial(port, baud, timeout=1)
         loop = asyncio.get_running_loop()
         while True:
-            line = await loop.run_in_executor(None, ser.readline)
-            text = line.decode("utf-8", errors="ignore").strip()
-            if text:
+            raw = await loop.run_in_executor(None, ser.readline)
+            text = raw.decode("utf-8", errors="ignore").strip()
+            parts = text.split(",")
+            if len(parts) == 6:
                 try:
+                    ax, ay, az, gx, gy, gz = (float(p) for p in parts)
                     await queue.put({
                         "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "value": round(float(text), 2),
-                        "unit": self.unit,
+                        "accel": {"x": round(ax, 4), "y": round(ay, 4), "z": round(az, 4)},
+                        "gyro":  {"x": round(gx, 4), "y": round(gy, 4), "z": round(gz, 4)},
                     })
                 except ValueError:
                     pass
 
     async def _read_mqtt(self, queue: asyncio.Queue) -> None:
+        """Expect JSON payload: {\"accel\":{x,y,z}, \"gyro\":{x,y,z}}"""
+        import json  # noqa: PLC0415
         import paho.mqtt.client as mqtt  # noqa: PLC0415
-        host = os.getenv("MQTT_HOST", "localhost")
-        topic = os.getenv("MQTT_TOPIC", "sensor/value")
-        loop = asyncio.get_running_loop()
+        host  = os.getenv("MQTT_HOST",  "localhost")
+        topic = os.getenv("MQTT_TOPIC", "imu/data")
+        loop  = asyncio.get_running_loop()
 
         def on_message(_client, _userdata, msg):
             try:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "value": round(float(msg.payload.decode()), 2),
-                        "unit": self.unit,
-                    },
-                )
-            except ValueError:
+                payload = json.loads(msg.payload.decode())
+                loop.call_soon_threadsafe(queue.put_nowait, {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "accel": payload["accel"],
+                    "gyro":  payload["gyro"],
+                })
+            except (ValueError, KeyError):
                 pass
 
         client = mqtt.Client()

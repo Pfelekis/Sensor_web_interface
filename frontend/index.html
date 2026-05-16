@@ -3,95 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sensor Dashboard</title>
+    <title>IMU Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>Sensor Dashboard</h1>
+            <h1>6 DOF IMU Dashboard</h1>
             <span id="status" class="status disconnected">Connecting…</span>
         </header>
 
-        <main>
+        <div class="grid">
             <div class="card">
-                <div class="reading">
-                    <span id="current-value">--</span>
-                    <span id="current-unit"></span>
+                <h2>Accelerometer <small>m/s²</small></h2>
+                <div class="readings">
+                    <div class="axis x">X<span id="accel-x">--</span></div>
+                    <div class="axis y">Y<span id="accel-y">--</span></div>
+                    <div class="axis z">Z<span id="accel-z">--</span></div>
                 </div>
-                <canvas id="chart"></canvas>
+                <canvas id="accel-chart"></canvas>
             </div>
-        </main>
+
+            <div class="card">
+                <h2>Gyroscope <small>°/s</small></h2>
+                <div class="readings">
+                    <div class="axis x">X<span id="gyro-x">--</span></div>
+                    <div class="axis y">Y<span id="gyro-y">--</span></div>
+                    <div class="axis z">Z<span id="gyro-z">--</span></div>
+                </div>
+                <canvas id="gyro-chart"></canvas>
+            </div>
+        </div>
     </div>
 
     <script>
-        const MAX_POINTS = 60;
+        const MAX = 200; // 20 s at 10 Hz
         const labels = [];
-        const values = [];
+        const AXIS_COLORS = ['#f87171', '#4ade80', '#60a5fa'];
 
-        const chart = new Chart(document.getElementById('chart').getContext('2d'), {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [{
-                    label: 'Sensor Reading',
-                    data: values,
-                    borderColor: '#4ade80',
-                    backgroundColor: 'rgba(74,222,128,0.08)',
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    tension: 0.3,
-                }]
-            },
-            options: {
-                animation: false,
-                responsive: true,
-                scales: {
-                    x: {
-                        ticks: { color: '#9ca3af', maxTicksLimit: 8 },
-                        grid:  { color: '#374151' }
-                    },
-                    y: {
-                        ticks: { color: '#9ca3af' },
-                        grid:  { color: '#374151' }
-                    }
+        function makeChart(canvasId) {
+            return new Chart(document.getElementById(canvasId).getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: ['X', 'Y', 'Z'].map((axis, i) => ({
+                        label: axis,
+                        data: [],
+                        borderColor: AXIS_COLORS[i],
+                        backgroundColor: 'transparent',
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        tension: 0.2,
+                    }))
                 },
-                plugins: {
-                    legend: { labels: { color: '#f9fafb' } }
+                options: {
+                    animation: false,
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: {
+                        x: { ticks: { color: '#9ca3af', maxTicksLimit: 6 }, grid: { color: '#374151' } },
+                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+                    },
+                    plugins: { legend: { labels: { color: '#f9fafb' } } },
                 }
-            }
-        });
+            });
+        }
+
+        const accelChart = makeChart('accel-chart');
+        const gyroChart  = makeChart('gyro-chart');
 
         function pushReading(r) {
             const t = new Date(r.timestamp).toLocaleTimeString();
             labels.push(t);
-            values.push(r.value);
-            if (labels.length > MAX_POINTS) { labels.shift(); values.shift(); }
-            chart.update();
-            document.getElementById('current-value').textContent = r.value.toFixed(2);
-            document.getElementById('current-unit').textContent  = r.unit;
+            if (labels.length > MAX) labels.shift();
+
+            function feed(chart, vals) {
+                chart.data.datasets.forEach((ds, i) => {
+                    ds.data.push(vals[i]);
+                    if (ds.data.length > MAX) ds.data.shift();
+                });
+                chart.update('none');
+            }
+
+            feed(accelChart, [r.accel.x, r.accel.y, r.accel.z]);
+            feed(gyroChart,  [r.gyro.x,  r.gyro.y,  r.gyro.z]);
+
+            document.getElementById('accel-x').textContent = r.accel.x.toFixed(3);
+            document.getElementById('accel-y').textContent = r.accel.y.toFixed(3);
+            document.getElementById('accel-z').textContent = r.accel.z.toFixed(3);
+            document.getElementById('gyro-x').textContent  = r.gyro.x.toFixed(3);
+            document.getElementById('gyro-y').textContent  = r.gyro.y.toFixed(3);
+            document.getElementById('gyro-z').textContent  = r.gyro.z.toFixed(3);
         }
 
-        // Pre-populate chart with historical data
         fetch('/history')
             .then(res => res.json())
             .then(history => history.reverse().forEach(pushReading))
             .catch(() => {});
 
-        // Live stream via SSE
         const statusEl = document.getElementById('status');
         const source   = new EventSource('/stream');
-
-        source.onopen = () => {
-            statusEl.textContent = 'Live';
-            statusEl.className   = 'status connected';
-        };
-        source.onmessage = e => pushReading(JSON.parse(e.data));
-        source.onerror   = () => {
-            statusEl.textContent = 'Reconnecting…';
-            statusEl.className   = 'status disconnected';
-        };
+        source.onopen    = () => { statusEl.textContent = 'Live';           statusEl.className = 'status connected';    };
+        source.onmessage = e  => pushReading(JSON.parse(e.data));
+        source.onerror   = () => { statusEl.textContent = 'Reconnecting…'; statusEl.className = 'status disconnected'; };
     </script>
 </body>
 </html>

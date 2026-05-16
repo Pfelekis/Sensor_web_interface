@@ -9,8 +9,12 @@ async def init_db(db_path: str = DB_PATH) -> None:
             CREATE TABLE IF NOT EXISTS readings (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT    NOT NULL,
-                value     REAL    NOT NULL,
-                unit      TEXT    NOT NULL
+                accel_x   REAL    NOT NULL,
+                accel_y   REAL    NOT NULL,
+                accel_z   REAL    NOT NULL,
+                gyro_x    REAL    NOT NULL,
+                gyro_y    REAL    NOT NULL,
+                gyro_z    REAL    NOT NULL
             )
         """)
         await db.commit()
@@ -18,14 +22,19 @@ async def init_db(db_path: str = DB_PATH) -> None:
 
 async def insert_reading(
     timestamp: str,
-    value: float,
-    unit: str,
+    accel: dict,
+    gyro: dict,
     db_path: str = DB_PATH,
 ) -> None:
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            "INSERT INTO readings (timestamp, value, unit) VALUES (?, ?, ?)",
-            (timestamp, value, unit),
+            """
+            INSERT INTO readings
+                (timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (timestamp, accel["x"], accel["y"], accel["z"],
+             gyro["x"],  gyro["y"],  gyro["z"]),
         )
         await db.commit()
 
@@ -34,8 +43,18 @@ async def get_history(limit: int = 100, db_path: str = DB_PATH) -> list[dict]:
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT timestamp, value, unit FROM readings ORDER BY id DESC LIMIT ?",
+            """
+            SELECT timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
+            FROM readings ORDER BY id DESC LIMIT ?
+            """,
             (limit,),
         ) as cursor:
             rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
+    return [
+        {
+            "timestamp": r["timestamp"],
+            "accel": {"x": r["accel_x"], "y": r["accel_y"], "z": r["accel_z"]},
+            "gyro":  {"x": r["gyro_x"],  "y": r["gyro_y"],  "z": r["gyro_z"]},
+        }
+        for r in rows
+    ]

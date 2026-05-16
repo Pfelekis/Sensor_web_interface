@@ -17,16 +17,19 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 
 async def _broadcaster() -> None:
-    """Read from the sensor, persist each reading, then fan out to SSE subscribers."""
+    """Read sensor queue, persist at 1 Hz, fan out to all SSE subscribers."""
     reader = SensorReader()
     asyncio.create_task(reader.start(_sensor_queue))
+    persist_tick = 0
     while True:
         reading = await _sensor_queue.get()
-        await insert_reading(
-            timestamp=reading["timestamp"],
-            value=reading["value"],
-            unit=reading["unit"],
-        )
+        persist_tick += 1
+        if persist_tick % 10 == 0:  # write to DB at 1 Hz (sensor runs at 10 Hz)
+            await insert_reading(
+                timestamp=reading["timestamp"],
+                accel=reading["accel"],
+                gyro=reading["gyro"],
+            )
         for q in list(_subscribers):
             q.put_nowait(reading)
 
@@ -39,7 +42,7 @@ async def lifespan(_app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="Sensor Dashboard", lifespan=lifespan)
+app = FastAPI(title="IMU Dashboard", lifespan=lifespan)
 
 
 @app.get("/")
@@ -49,7 +52,7 @@ async def index() -> FileResponse:
 
 @app.get("/history")
 async def history() -> list[dict]:
-    return await get_history(limit=100)
+    return await get_history(limit=200)
 
 
 @app.get("/stream")

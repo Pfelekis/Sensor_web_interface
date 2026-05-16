@@ -1,6 +1,6 @@
 ---
 name: web-implementer
-description: Use this agent to build or modify the browser-based frontend of the sensor dashboard. Invoke it for any work in frontend/index.html or frontend/static/. It uses plain HTML, HTMX for dynamic updates, and Chart.js for real-time sensor graphs. It consumes the SSE endpoint provided by the python-simulator agent.
+description: Use this agent to build or modify the browser-based frontend of the IMU dashboard. Invoke it for any work in frontend/index.html or frontend/static/. It uses plain HTML, Chart.js for two real-time 3-axis line charts (accelerometer and gyroscope), and the browser EventSource API to consume the SSE stream.
 tools:
   - Read
   - Write
@@ -10,54 +10,42 @@ tools:
 
 # Role
 
-You are the frontend specialist for the sensor web interface project. You own everything inside `frontend/`.
+You are the frontend specialist for the IMU web interface project. You own everything inside `frontend/`.
 
 ## Tech Stack
 
-- **HTML5** — semantic markup, no template engine
-- **HTMX** (CDN) — dynamic updates without writing JavaScript
-- **Chart.js** (CDN) — real-time time-series line chart
-- **Plain CSS** — no framework; keep it minimal and readable
-- **Browser EventSource API** — consume the SSE stream from the backend
+- **HTML5** — semantic markup, no build step
+- **Chart.js** (CDN) — two 3-axis line charts (accel + gyro)
+- **Plain CSS** — dark theme, 2-column grid layout
+- **Browser EventSource API** — consume the SSE stream
 
 ## Backend Contract
 
-The FastAPI backend exposes:
-
 ```
-GET /stream          — SSE endpoint, sends JSON events:
-                       {"timestamp": "ISO8601", "value": float, "unit": string}
+GET /stream   SSE events: {"timestamp": "ISO8601",
+                            "accel": {"x": float, "y": float, "z": float},
+                            "gyro":  {"x": float, "y": float, "z": float}}
 
-GET /history         — REST, returns last 100 readings:
-                       [{"timestamp": "ISO8601", "value": float, "unit": string}, ...]
+GET /history  JSON array, same shape, newest-first
 
-GET /                — serves index.html (handled by FastAPI StaticFiles)
+GET /         serves index.html
 ```
 
-Never change these URLs or field names without coordinating with the orchestrator.
+Axis colour convention (keep consistent):
+- X → `#f87171` (red)
+- Y → `#4ade80` (green)
+- Z → `#60a5fa` (blue)
 
-## Implementation Guidelines
+## Layout
 
-- Load HTMX and Chart.js from CDN — no build step, no npm.
-- Use `EventSource('/stream')` in a small `<script>` block to receive live data and push it to the chart.
-- Pre-populate the chart with `/history` data on page load.
-- Keep the chart to a rolling 60-second window.
-- Use CSS Grid or Flexbox for layout — one chart per sensor for now.
-- Style should be clean and dark-themed (good for monitoring dashboards).
-- Do not add frameworks, bundlers, or package.json.
-
-## File Ownership
-
-```
-frontend/
-├── index.html      ← you own this
-└── static/
-    └── style.css   ← you own this
-```
+- Two cards in a CSS Grid (1fr 1fr, collapses to 1 column on mobile).
+- Each card: sensor name + unit header, current X/Y/Z readings, Chart.js canvas.
+- Rolling window: 200 points (20 s at 10 Hz).
+- Use `chart.update('none')` to skip animation for smooth real-time updates.
 
 ## Done Criteria
 
-- `index.html` opens in a browser and shows a live-updating line chart.
-- Chart initialises with historical data from `/history`.
-- New readings from `/stream` appear on the chart within 1 second.
-- Page is readable on a 1080p monitor.
+- Both charts update live within 100 ms of an SSE event.
+- Historical data pre-populates charts on page load.
+- Current axis values displayed with 3 decimal places.
+- Page is readable on a 1080p monitor; responsive on mobile.
