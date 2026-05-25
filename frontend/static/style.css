@@ -9,7 +9,6 @@
     --red:     #f87171;
     --green:   #4ade80;
     --blue:    #60a5fa;
-    --orange:  #fb923c;
 }
 
 body {
@@ -43,6 +42,7 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .status.connected    { background: rgba(74,222,128,0.15);  color: var(--green); }
 .status.disconnected { background: rgba(248,113,113,0.15); color: var(--red);   }
 
+/* 2×2 responsive grid */
 .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -69,8 +69,9 @@ h1 { font-size: 1.5rem; font-weight: 600; }
     margin-bottom: 1rem;
 }
 
-.card h2 small { font-weight: 400; }
+.card h2 small { font-weight: 400; text-transform: none; }
 
+/* Axis value readouts */
 .readings {
     display: flex;
     gap: 2rem;
@@ -95,3 +96,42 @@ h1 { font-size: 1.5rem; font-weight: 600; }
 .axis.x span { color: var(--red);   }
 .axis.y span { color: var(--green); }
 .axis.z span { color: var(--blue);  }
+
+/* Path panel header */
+.path-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.pos-text {
+    font-size: 0.875rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.reset-btn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 0.375rem;
+    padding: 0.25rem 0.875rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.reset-btn:hover {
+    color: var(--text);
+    border-color: #6b7280;
+}
+
+/* Make canvases fill card width */
+#cube-canvas,
+#path-canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 0.375rem;
+}

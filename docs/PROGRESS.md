@@ -2,79 +2,83 @@
 
 ## Project
 
-`sensor_web_interface` — Real-time 6 DOF IMU dashboard (FastAPI + SSE + Chart.js)
+`sensor_web_interface` — Real-time 6 DOF IMU dashboard (FastAPI + SSE + Chart.js + Three.js)
 
 **Branch:** `claude/embedded-web-interface-plan-tyuy8`
 
 ---
 
+## Architecture: Where Code Runs
+
+```
+[Embedded Target]         [Python Backend]           [Browser]
+ MCU firmware             runs on your laptop        JavaScript
+ reads IMU chip           or a Raspberry Pi
+
+ accel/gyro data  ──►  complementary filter   ──►  Chart.js charts
+ (raw, CSV/MQTT)         roll/pitch angles          Three.js 3D cube
+                         dead-reckoning pos          2D path canvas
+                         SQLite persistence
+```
+
+**Key rule:** Filter runs on the server (Python), not the MCU. In production,
+you’d move it to the MCU to reduce bandwidth (send angles instead of raw data).
+
+---
+
 ## What Is Done
 
-### Infrastructure
-- [x] Multi-agent setup: `orchestrator`, `web-implementer`, `python-simulator`, `test-writer` in `.claude/agents/`
-- [x] `pyproject.toml` with `asyncio_mode = "auto"`
+### Backend
+- [x] `sensor.py` — simulate / serial / mqtt modes, configurable `SENSOR_RATE_HZ`
+- [x] `database.py` — 7-column SQLite schema + timestamp index + `get_reading_count()`
+- [x] `filters.py` — `ComplementaryFilter`: roll/pitch estimation + dead-reckoning position
+- [x] `main.py` — broadcaster enriches each reading with filter output before fan-out
+- [x] `main.py` — `POST /reset-position` resets filter velocity + position state
+- [x] `main.py` — `/health`, SSE headers (`Cache-Control`, `X-Accel-Buffering`)
 
-### Backend (`backend/`)
-- [x] `sensor.py` — `SensorReader` with three modes: `simulate` (default), `serial` (CSV over UART), `mqtt` (JSON payload)
-- [x] `sensor.py` — Configurable sample rate via `SENSOR_RATE_HZ` env var (default 10 Hz)
-- [x] `sensor.py` — Serial mode has reconnect loop (no crash on disconnect)
-- [x] `sensor.py` — MQTT mode validates payload keys before queuing
-- [x] `database.py` — async SQLite with 7-column schema (timestamp + accel xyz + gyro xyz)
-- [x] `database.py` — Index on `timestamp` column
-- [x] `database.py` — `get_reading_count()` helper
-- [x] `main.py` — pub-sub broadcaster (sensor → DB at 1 Hz → all SSE subscribers)
-- [x] `main.py` — Per-client queue capped at `maxsize=50` (slow clients drop frames, don’t crash)
-- [x] `main.py` — `QueueFull` handled gracefully in broadcaster
-- [x] `main.py` — SSE response has `Cache-Control: no-cache` and `X-Accel-Buffering: no`
-- [x] `main.py` — `/health` endpoint returns status + subscriber count
+### Frontend
+- [x] Accelerometer chart — 3-axis rolling 200-point line chart
+- [x] Gyroscope chart — 3-axis rolling 200-point line chart
+- [x] **Three.js 3D cube** — PCB-shaped box rotates with roll/pitch in real-time
+- [x] **2D movement path** — auto-scaling X-Y canvas with gradient trail, start/end markers
+- [x] Reset button — clears path canvas + calls `POST /reset-position`
+- [x] History preload feeds raw charts only (filter state cannot be replayed)
 
-### Frontend (`frontend/`)
-- [x] Two Chart.js line charts: Accelerometer (m/s²) and Gyroscope (°/s)
-- [x] 3 datasets per chart (X=red, Y=green, Z=blue)
-- [x] Rolling 200-point window (20 s at 10 Hz)
-- [x] Pre-populates from `/history` on load
-- [x] Live connection status indicator
-- [x] Dark theme, responsive 2-column grid
-
-### Tests (`tests/`)
-- [x] `test_database.py` — 12 tests: table creation, index, idempotency, insert/retrieve, empty list, precision, negatives, count, limit, ordering, default limit
-- [x] `test_sensor.py` — 12 tests: schema, types, ISO8601, UTC timezone, gravity plausibility, XY near zero, gyro range, 10 Hz rate, 3 sequential readings, monotonic timestamps, unknown mode error
-- [x] `test_api.py` — 13 tests: HTML, health ok, subscriber count, history array, empty history, schema, limit, stream content-type, cache-control header, data prefix, valid JSON, axis values roundtrip
+### Tests (51 total)
+- [x] `test_filters.py` — 16 tests: schema, flat convergence, 45°/30° tilt, gyro integration, position, reset
+- [x] `test_database.py` — 12 tests
+- [x] `test_sensor.py` — 12 tests
+- [x] `test_api.py` — 15 tests: includes reset-position, SSE angles/position schema
 
 ---
 
-## Known Limitations / Future Work
+## Known Limitations
 
-- [ ] No time-range filter on `/history` (e.g., `?since=<timestamp>`)
-- [ ] No WebSocket alternative for bidirectional control
-- [ ] No authentication / API key on endpoints
-- [ ] DB writes use a new connection per call — consider a persistent pool under high load
-- [ ] Serial reconnect uses bare `except Exception` — could log the specific error
-- [ ] Frontend `fetch('/history')` silently swallows errors — add a visual error state
-- [ ] No pagination on `/history`
-- [ ] No Docker / docker-compose file yet
+- [ ] **Yaw drifts** — need a magnetometer (9 DOF) for stable yaw
+- [ ] **Dead-reckoning drifts** — unavoidable without GPS; useful for <5 s gestures only
+- [ ] No time-range filter on `/history`
+- [ ] No authentication
+- [ ] No Docker file
+- [ ] DB uses one connection per write — fine for demo, consider a pool at scale
 
 ---
 
-## Key Design Decisions
-
-| Decision | Reason |
-|---|---|
-| SSE over WebSocket | Sensor data is one-directional; SSE is simpler and auto-reconnects |
-| 10 Hz SSE, 1 Hz DB | Keep UI smooth without hammering SQLite |
-| Per-client queue with maxsize | Prevents memory growth if a browser tab goes idle |
-| CSV serial protocol | Minimal firmware code; easy to `printf` from C |
-| JSON MQTT payload | Human-readable, easy to inspect with `mosquitto_sub` |
-
----
-
-## Environment Variables Reference
+## Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `SENSOR_MODE` | `simulate` | `simulate` / `serial` / `mqtt` |
 | `SENSOR_RATE_HZ` | `10` | Sample rate for simulator |
-| `SERIAL_PORT` | `/dev/ttyUSB0` | Serial device path |
-| `BAUD_RATE` | `115200` | Serial baud rate |
-| `MQTT_HOST` | `localhost` | MQTT broker hostname |
-| `MQTT_TOPIC` | `imu/data` | MQTT topic to subscribe |
+| `SERIAL_PORT` | `/dev/ttyUSB0` | Serial device |
+| `BAUD_RATE` | `115200` | Baud rate |
+| `MQTT_HOST` | `localhost` | MQTT broker |
+| `MQTT_TOPIC` | `imu/data` | MQTT topic |
+
+## Serial Protocol (firmware side)
+
+```c
+// One printf per sample, at your desired rate:
+printf("%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+       accel_x, accel_y, accel_z,
+       gyro_x,  gyro_y,  gyro_z);
+```

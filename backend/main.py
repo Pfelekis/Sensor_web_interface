@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.database import get_history, init_db, insert_reading
+from backend.filters import ComplementaryFilter
 from backend.sensor import SensorReader
 
 _sensor_queue: asyncio.Queue = asyncio.Queue()
@@ -15,16 +16,19 @@ _subscribers: list[asyncio.Queue] = []
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
+_reader = SensorReader()
+_filter = ComplementaryFilter(dt=1.0 / _reader.rate_hz)
+
 
 async def _broadcaster() -> None:
-    """Read sensor queue, persist at 1 Hz, fan out to all SSE subscribers."""
-    reader = SensorReader()
-    asyncio.create_task(reader.start(_sensor_queue))
+    """Read sensor queue, enrich with filter output, persist at 1 Hz, fan out."""
+    asyncio.create_task(_reader.start(_sensor_queue))
     persist_tick = 0
     while True:
         reading = await _sensor_queue.get()
+        enriched = {**reading, **_filter.update(reading["accel"], reading["gyro"])}
         persist_tick += 1
-        if persist_tick % 10 == 0:  # write to DB at ~1 Hz; sensor runs at 10 Hz
+        if persist_tick % 10 == 0:  # write to DB at ~1 Hz
             await insert_reading(
                 timestamp=reading["timestamp"],
                 accel=reading["accel"],
@@ -32,9 +36,9 @@ async def _broadcaster() -> None:
             )
         for q in list(_subscribers):
             try:
-                q.put_nowait(reading)
+                q.put_nowait(enriched)
             except asyncio.QueueFull:
-                pass  # drop oldest for slow clients rather than crash
+                pass
 
 
 @asynccontextmanager
@@ -53,6 +57,12 @@ async def health() -> dict:
     return {"status": "ok", "subscribers": len(_subscribers)}
 
 
+@app.post("/reset-position")
+async def reset_position() -> dict:
+    _filter.reset_position()
+    return {"status": "ok"}
+
+
 @app.get("/history")
 async def history() -> list[dict]:
     return await get_history(limit=200)
@@ -60,7 +70,7 @@ async def history() -> list[dict]:
 
 @app.get("/stream")
 async def stream() -> StreamingResponse:
-    q: asyncio.Queue = asyncio.Queue(maxsize=50)  # cap backlog per client
+    q: asyncio.Queue = asyncio.Queue(maxsize=50)
     _subscribers.append(q)
 
     async def event_generator():
@@ -76,7 +86,7 @@ async def stream() -> StreamingResponse:
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # prevent nginx from buffering SSE
+            "X-Accel-Buffering": "no",
         },
     )
 

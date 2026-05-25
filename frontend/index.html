@@ -6,6 +6,7 @@
     <title>IMU Dashboard</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.163/build/three.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -15,6 +16,8 @@
         </header>
 
         <div class="grid">
+
+            <!-- Row 1: raw sensor charts -->
             <div class="card">
                 <h2>Accelerometer <small>m/s²</small></h2>
                 <div class="readings">
@@ -34,50 +37,220 @@
                 </div>
                 <canvas id="gyro-chart"></canvas>
             </div>
+
+            <!-- Row 2: processed data -->
+            <div class="card">
+                <h2>Orientation <small>complementary filter</small></h2>
+                <div class="readings">
+                    <div class="axis x">Roll<span id="angle-roll">--</span></div>
+                    <div class="axis y">Pitch<span id="angle-pitch">--</span></div>
+                </div>
+                <canvas id="cube-canvas" width="480" height="260"></canvas>
+            </div>
+
+            <div class="card">
+                <h2>Movement Path <small>X-Y plane · dead reckoning</small></h2>
+                <div class="path-header">
+                    <span id="pos-display" class="pos-text">x: 0.000 m &nbsp; y: 0.000 m</span>
+                    <button class="reset-btn" onclick="resetPath()">Reset</button>
+                </div>
+                <canvas id="path-canvas" width="480" height="260"></canvas>
+            </div>
+
         </div>
     </div>
 
     <script>
-        const MAX = 200; // 20 s at 10 Hz
-        const labels = [];
-        const AXIS_COLORS = ['#f87171', '#4ade80', '#60a5fa'];
+    // ── Chart.js line charts ───────────────────────────────────────────────
+    const MAX    = 200;
+    const labels = [];
+    const COLORS = ['#f87171', '#4ade80', '#60a5fa'];
 
-        function makeChart(canvasId) {
-            return new Chart(document.getElementById(canvasId).getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels,
-                    datasets: ['X', 'Y', 'Z'].map((axis, i) => ({
-                        label: axis,
-                        data: [],
-                        borderColor: AXIS_COLORS[i],
-                        backgroundColor: 'transparent',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        tension: 0.2,
-                    }))
+    function makeChart(id) {
+        return new Chart(document.getElementById(id).getContext('2d'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets: ['X', 'Y', 'Z'].map((axis, i) => ({
+                    label: axis,
+                    data: [],
+                    borderColor: COLORS[i],
+                    backgroundColor: 'transparent',
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    tension: 0.2,
+                }))
+            },
+            options: {
+                animation: false,
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { ticks: { color: '#9ca3af', maxTicksLimit: 6 }, grid: { color: '#374151' } },
+                    y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
                 },
-                options: {
-                    animation: false,
-                    responsive: true,
-                    interaction: { mode: 'index', intersect: false },
-                    scales: {
-                        x: { ticks: { color: '#9ca3af', maxTicksLimit: 6 }, grid: { color: '#374151' } },
-                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
-                    },
-                    plugins: { legend: { labels: { color: '#f9fafb' } } },
-                }
-            });
+                plugins: { legend: { labels: { color: '#f9fafb' } } },
+            }
+        });
+    }
+
+    const accelChart = makeChart('accel-chart');
+    const gyroChart  = makeChart('gyro-chart');
+
+    // ── Three.js orientation cube ──────────────────────────────────────────
+    const cubeCanvas = document.getElementById('cube-canvas');
+    const renderer   = new THREE.WebGLRenderer({ canvas: cubeCanvas, antialias: true, alpha: true });
+    renderer.setSize(cubeCanvas.width, cubeCanvas.height);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    const scene  = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, cubeCanvas.width / cubeCanvas.height, 0.1, 100);
+    camera.position.set(0, 1.8, 4.5);
+    camera.lookAt(0, 0, 0);
+
+    // PCB-shaped box so orientation is visually obvious
+    const geo  = new THREE.BoxGeometry(2.8, 0.4, 1.6);
+    const mats = [
+        new THREE.MeshPhongMaterial({ color: 0xf87171 }),  // +X  red
+        new THREE.MeshPhongMaterial({ color: 0xfca5a5 }),  // -X  light red
+        new THREE.MeshPhongMaterial({ color: 0x4ade80 }),  // +Y  green (top)
+        new THREE.MeshPhongMaterial({ color: 0x166534 }),  // -Y  dark green (bottom)
+        new THREE.MeshPhongMaterial({ color: 0x60a5fa }),  // +Z  blue (front)
+        new THREE.MeshPhongMaterial({ color: 0x1e3a5f }),  // -Z  dark blue (back)
+    ];
+    const imuMesh = new THREE.Mesh(geo, mats);
+    scene.add(imuMesh);
+    scene.add(new THREE.AxesHelper(2.0));
+    scene.add(new THREE.GridHelper(6, 6, 0x374151, 0x374151));
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(4, 6, 5);
+    scene.add(dirLight);
+    scene.add(new THREE.AmbientLight(0x334155, 4));
+
+    (function animateCube() {
+        requestAnimationFrame(animateCube);
+        renderer.render(scene, camera);
+    })();
+
+    function updateOrientation(roll, pitch) {
+        imuMesh.rotation.z = THREE.MathUtils.degToRad(-roll);
+        imuMesh.rotation.x = THREE.MathUtils.degToRad(pitch);
+        document.getElementById('angle-roll').textContent  = roll.toFixed(1)  + '°';
+        document.getElementById('angle-pitch').textContent = pitch.toFixed(1) + '°';
+    }
+
+    // ── 2D movement path ───────────────────────────────────────────────────
+    const pathCanvas = document.getElementById('path-canvas');
+    const pathCtx    = pathCanvas.getContext('2d');
+    const W = pathCanvas.width;
+    const H = pathCanvas.height;
+    const PAD = 28;
+    const pathPoints = [];
+    const PATH_MAX   = 1000;
+
+    function worldToCanvas(px, py, b) {
+        const scale = Math.min(
+            (W - 2*PAD) / (b.maxX - b.minX || 0.001),
+            (H - 2*PAD) / (b.maxY - b.minY || 0.001)
+        );
+        const cx = W/2 + (px - (b.minX + b.maxX) / 2) * scale;
+        const cy = H/2 - (py - (b.minY + b.maxY) / 2) * scale;
+        return [cx, cy];
+    }
+
+    function redrawPath() {
+        pathCtx.clearRect(0, 0, W, H);
+
+        // Draw grid
+        pathCtx.strokeStyle = '#374151';
+        pathCtx.lineWidth = 0.5;
+        for (let x = 0; x <= W; x += W/6) { pathCtx.beginPath(); pathCtx.moveTo(x,0); pathCtx.lineTo(x,H); pathCtx.stroke(); }
+        for (let y = 0; y <= H; y += H/4) { pathCtx.beginPath(); pathCtx.moveTo(0,y); pathCtx.lineTo(W,y); pathCtx.stroke(); }
+
+        if (pathPoints.length < 2) return;
+
+        const xs = pathPoints.map(p => p.x);
+        const ys = pathPoints.map(p => p.y);
+        const b  = { minX: Math.min(...xs), maxX: Math.max(...xs),
+                     minY: Math.min(...ys), maxY: Math.max(...ys) };
+
+        // Gradient path: fades from dim to bright blue
+        for (let i = 1; i < pathPoints.length; i++) {
+            const a = 0.15 + 0.85 * (i / pathPoints.length);
+            pathCtx.strokeStyle = `rgba(96,165,250,${a.toFixed(2)})`;
+            pathCtx.lineWidth   = 2;
+            pathCtx.beginPath();
+            const [x0,y0] = worldToCanvas(pathPoints[i-1].x, pathPoints[i-1].y, b);
+            const [x1,y1] = worldToCanvas(pathPoints[i].x,   pathPoints[i].y,   b);
+            pathCtx.moveTo(x0, y0);
+            pathCtx.lineTo(x1, y1);
+            pathCtx.stroke();
         }
 
-        const accelChart = makeChart('accel-chart');
-        const gyroChart  = makeChart('gyro-chart');
+        // Start marker (green)
+        const [sx, sy] = worldToCanvas(pathPoints[0].x, pathPoints[0].y, b);
+        pathCtx.beginPath(); pathCtx.arc(sx, sy, 6, 0, Math.PI*2);
+        pathCtx.fillStyle = '#4ade80'; pathCtx.fill();
 
-        function pushReading(r) {
+        // Current position marker (blue)
+        const last = pathPoints[pathPoints.length-1];
+        const [lx, ly] = worldToCanvas(last.x, last.y, b);
+        pathCtx.beginPath(); pathCtx.arc(lx, ly, 6, 0, Math.PI*2);
+        pathCtx.fillStyle = '#60a5fa'; pathCtx.fill();
+    }
+
+    function updatePath(x, y) {
+        pathPoints.push({ x, y });
+        if (pathPoints.length > PATH_MAX) pathPoints.shift();
+        redrawPath();
+        document.getElementById('pos-display').textContent =
+            `x: ${x.toFixed(3)} m   y: ${y.toFixed(3)} m`;
+    }
+
+    async function resetPath() {
+        pathPoints.length = 0;
+        pathCtx.clearRect(0, 0, W, H);
+        document.getElementById('pos-display').textContent = 'x: 0.000 m   y: 0.000 m';
+        await fetch('/reset-position', { method: 'POST' });
+    }
+
+    // ── Push a reading into all panels ─────────────────────────────────────
+    function pushReading(r) {
+        const t = new Date(r.timestamp).toLocaleTimeString();
+        labels.push(t);
+        if (labels.length > MAX) labels.shift();
+
+        function feed(chart, vals) {
+            chart.data.datasets.forEach((ds, i) => {
+                ds.data.push(vals[i]);
+                if (ds.data.length > MAX) ds.data.shift();
+            });
+            chart.update('none');
+        }
+
+        feed(accelChart, [r.accel.x, r.accel.y, r.accel.z]);
+        feed(gyroChart,  [r.gyro.x,  r.gyro.y,  r.gyro.z]);
+
+        document.getElementById('accel-x').textContent = r.accel.x.toFixed(3);
+        document.getElementById('accel-y').textContent = r.accel.y.toFixed(3);
+        document.getElementById('accel-z').textContent = r.accel.z.toFixed(3);
+        document.getElementById('gyro-x').textContent  = r.gyro.x.toFixed(3);
+        document.getElementById('gyro-y').textContent  = r.gyro.y.toFixed(3);
+        document.getElementById('gyro-z').textContent  = r.gyro.z.toFixed(3);
+
+        if (r.angles)   updateOrientation(r.angles.roll, r.angles.pitch);
+        if (r.position) updatePath(r.position.x, r.position.y);
+    }
+
+    // ── History preload (raw charts only; no filter state to replay) ────────
+    fetch('/history')
+        .then(res => res.json())
+        .then(h => h.reverse().forEach(r => {
+            // history has no angles/position — feed raw charts only
             const t = new Date(r.timestamp).toLocaleTimeString();
             labels.push(t);
             if (labels.length > MAX) labels.shift();
-
             function feed(chart, vals) {
                 chart.data.datasets.forEach((ds, i) => {
                     ds.data.push(vals[i]);
@@ -85,28 +258,17 @@
                 });
                 chart.update('none');
             }
-
             feed(accelChart, [r.accel.x, r.accel.y, r.accel.z]);
             feed(gyroChart,  [r.gyro.x,  r.gyro.y,  r.gyro.z]);
+        }))
+        .catch(() => {});
 
-            document.getElementById('accel-x').textContent = r.accel.x.toFixed(3);
-            document.getElementById('accel-y').textContent = r.accel.y.toFixed(3);
-            document.getElementById('accel-z').textContent = r.accel.z.toFixed(3);
-            document.getElementById('gyro-x').textContent  = r.gyro.x.toFixed(3);
-            document.getElementById('gyro-y').textContent  = r.gyro.y.toFixed(3);
-            document.getElementById('gyro-z').textContent  = r.gyro.z.toFixed(3);
-        }
-
-        fetch('/history')
-            .then(res => res.json())
-            .then(history => history.reverse().forEach(pushReading))
-            .catch(() => {});
-
-        const statusEl = document.getElementById('status');
-        const source   = new EventSource('/stream');
-        source.onopen    = () => { statusEl.textContent = 'Live';           statusEl.className = 'status connected';    };
-        source.onmessage = e  => pushReading(JSON.parse(e.data));
-        source.onerror   = () => { statusEl.textContent = 'Reconnecting…'; statusEl.className = 'status disconnected'; };
+    // ── SSE live stream ────────────────────────────────────────────────────
+    const statusEl = document.getElementById('status');
+    const source   = new EventSource('/stream');
+    source.onopen    = () => { statusEl.textContent = 'Live';           statusEl.className = 'status connected';    };
+    source.onmessage = e  => pushReading(JSON.parse(e.data));
+    source.onerror   = () => { statusEl.textContent = 'Reconnecting…'; statusEl.className = 'status disconnected'; };
     </script>
 </body>
 </html>
