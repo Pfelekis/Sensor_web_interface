@@ -16,6 +16,10 @@ async def _one_reading(timeout: float = 3.0) -> dict:
         task.cancel()
 
 
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
 @pytest.mark.asyncio
 async def test_reading_has_required_keys():
     r = await _one_reading()
@@ -49,23 +53,98 @@ async def test_timestamp_is_iso8601():
 
 
 @pytest.mark.asyncio
+async def test_timestamp_is_utc():
+    r = await _one_reading()
+    ts = datetime.fromisoformat(r["timestamp"])
+    assert ts.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
+# Physics plausibility
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
 async def test_accel_z_near_gravity():
-    """Simulated Z-axis acceleration should be close to 9.81 m/s²."""
     r = await _one_reading()
     assert 8.0 < r["accel"]["z"] < 12.0
 
 
 @pytest.mark.asyncio
+async def test_accel_xy_small_at_simulated_rest():
+    r = await _one_reading()
+    assert abs(r["accel"]["x"]) < 2.0
+    assert abs(r["accel"]["y"]) < 2.0
+
+
+@pytest.mark.asyncio
+async def test_gyro_values_in_reasonable_range():
+    r = await _one_reading()
+    for axis in ("x", "y", "z"):
+        assert abs(r["gyro"][axis]) < 20.0  # degrees/s
+
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
 async def test_simulator_rate_approx_10hz():
-    """Two consecutive readings should arrive ~0.1 s apart."""
     reader = SensorReader()
     queue: asyncio.Queue = asyncio.Queue()
     task = asyncio.create_task(reader.start(queue))
     try:
-        t0 = asyncio.get_event_loop().time()
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
         await asyncio.wait_for(queue.get(), timeout=2.0)
         await asyncio.wait_for(queue.get(), timeout=2.0)
-        elapsed = asyncio.get_event_loop().time() - t0
+        elapsed = loop.time() - t0
     finally:
         task.cancel()
     assert 0.05 <= elapsed <= 0.5
+
+
+# ---------------------------------------------------------------------------
+# Multiple readings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_multiple_readings_all_valid():
+    reader = SensorReader()
+    queue: asyncio.Queue = asyncio.Queue()
+    task = asyncio.create_task(reader.start(queue))
+    try:
+        readings = [
+            await asyncio.wait_for(queue.get(), timeout=2.0)
+            for _ in range(3)
+        ]
+    finally:
+        task.cancel()
+    for r in readings:
+        assert {"timestamp", "accel", "gyro"} <= r.keys()
+        assert isinstance(r["accel"]["z"], float)
+
+
+@pytest.mark.asyncio
+async def test_readings_have_monotonic_timestamps():
+    reader = SensorReader()
+    queue: asyncio.Queue = asyncio.Queue()
+    task = asyncio.create_task(reader.start(queue))
+    try:
+        r1 = await asyncio.wait_for(queue.get(), timeout=2.0)
+        r2 = await asyncio.wait_for(queue.get(), timeout=2.0)
+    finally:
+        task.cancel()
+    assert r1["timestamp"] <= r2["timestamp"]
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_unknown_mode_raises_value_error():
+    reader = SensorReader()
+    reader.mode = "invalid_mode"
+    queue: asyncio.Queue = asyncio.Queue()
+    with pytest.raises(ValueError, match="Unknown SENSOR_MODE"):
+        await reader.start(queue)

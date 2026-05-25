@@ -17,6 +17,9 @@ async def init_db(db_path: str = DB_PATH) -> None:
                 gyro_z    REAL    NOT NULL
             )
         """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp)"
+        )
         await db.commit()
 
 
@@ -58,3 +61,10 @@ async def get_history(limit: int = 100, db_path: str = DB_PATH) -> list[dict]:
         }
         for r in rows
     ]
+
+
+async def get_reading_count(db_path: str = DB_PATH) -> int:
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM readings") as cursor:
+            row = await cursor.fetchone()
+    return row[0] if row else 0
